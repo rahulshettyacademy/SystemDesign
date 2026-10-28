@@ -32,7 +32,20 @@ export interface LogRecord {
 
 export const newSpanId = () => randomBytes(8).toString('hex');
 export const newTraceId = () => randomBytes(16).toString('hex');
-const now = () => performance.timeOrigin + performance.now();
+// performance.now() is precise but stops while the host sleeps (Docker Desktop pauses its VM),
+// so timeOrigin + now() drifts behind real time by a different amount in every container and
+// spans from different services stop lining up. Re-anchor to the wall clock as soon as they
+// diverge by more than Date.now()'s 1 ms resolution: calls between services are ms apart.
+const MAX_DRIFT_MS = 2;
+let anchorWall = Date.now();
+let anchorMono = performance.now();
+const now = () => {
+  const t = anchorWall + (performance.now() - anchorMono);
+  if (Math.abs(Date.now() - t) <= MAX_DRIFT_MS) return t;
+  anchorWall = Date.now();
+  anchorMono = performance.now();
+  return anchorWall;
+};
 
 /** Buffers spans/logs and ships them to the lab service in small batches (LAB_MODE only). */
 class Exporter {

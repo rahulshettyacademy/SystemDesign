@@ -97,17 +97,59 @@ export function listTraces(filter?: string, limit = 100) {
 export function getTrace(id: string) {
   const t = traces.get(id);
   if (!t) return null;
-  // Nginx logs with millisecond precision at the END of a request; align its start with its children.
+  // Clock-skew correction, as tracing tools do: every container has its own clock, and Nginx logs
+  // millisecond, cached-clock times at the END of a request. Causality is the ground truth: a
+  // request can't be received before it was sent, and a synchronous callee must answer before its
+  // caller got the reply. Walk the tree top-down and shift any span (with its subtree) that breaks
+  // this into its caller's window; place Nginx just before the upstream it proxied to.
   const spans = t.spans.map((s) => ({ ...s }));
-  for (const s of spans.filter((x) => x.service === 'nginx')) {
-    const kids = spans.filter((c) => c.parentId === s.spanId);
-    if (kids.length) {
-      const first = Math.min(...kids.map((k) => k.startTime));
-      const last = Math.max(...kids.map((k) => k.startTime + k.durationMs));
-      if (first < s.startTime) s.startTime = first - 0.2;
-      s.durationMs = Math.max(s.durationMs, Math.round((last - s.startTime + 0.2) * 100) / 100);
-    }
+  const byId = new Map(spans.map((s) => [s.spanId, s]));
+  const kidsOf = new Map<string, SpanRecord[]>();
+  for (const s of spans) {
+    if (s.parentId && byId.has(s.parentId)) kidsOf.set(s.parentId, [...(kidsOf.get(s.parentId) ?? []), s]);
   }
+  const shift = (s: SpanRecord, d: number) => {
+    s.startTime += d;
+    for (const k of kidsOf.get(s.spanId) ?? []) shift(k, d);
+  };
+  // Center a callee in its caller's window when it sticks out of it (the clock gap is unknown).
+  const fitInside = (k: SpanRecord, lo: number, hi: number) => {
+    if (k.startTime >= lo && k.startTime + k.durationMs <= hi) return;
+    shift(k, lo + Math.max(0, (hi - lo - k.durationMs) / 2) - k.startTime);
+  };
+  const visit = (s: SpanRecord, parent?: SpanRecord) => {
+    const kids = kidsOf.get(s.spanId) ?? [];
+    if (s.service === 'nginx') {
+      let loggedEnd = s.startTime + s.durationMs;
+      if (parent) {
+        // Proxied by Nginx inside a service's call: the caller's own clock bounds it, so Nginx's
+        // coarse logged time is only used for its length. Its upstream must fit in the same window.
+        const lo = parent.startTime + 0.1;
+        const hi = parent.startTime + parent.durationMs - 0.1;
+        for (const k of kids) fitInside(k, lo + 0.1, hi);
+        s.startTime = kids.length ? Math.max(lo, Math.min(...kids.map((k) => k.startTime)) - 0.1) : lo;
+        loggedEnd = Math.min(hi, s.startTime + s.durationMs);
+      } else {
+        const start = kids.length ? Math.min(s.startTime, Math.min(...kids.map((k) => k.startTime)) - 0.2) : s.startTime;
+        s.startTime = start;
+        for (const k of kids) if (k.startTime < start + 0.1) shift(k, start + 0.1 - k.startTime);
+      }
+      kids.forEach((k) => visit(k, s));
+      let end = kids.length ? Math.max(loggedEnd, Math.max(...kids.map((k) => k.startTime + k.durationMs)) + 0.2) : loggedEnd;
+      if (parent) end = Math.min(end, parent.startTime + parent.durationMs);
+      s.durationMs = Math.max(0, Math.round((end - s.startTime) * 100) / 100);
+      return;
+    }
+    for (const k of kids) {
+      const crossesProcess = k.service !== s.service || k.instance !== s.instance;
+      if (!crossesProcess || k.service === 'nginx') continue;
+      // A synchronous call (client → server) must fit inside the caller; an async consumer only can't start early.
+      if (s.kind === 'client' && k.kind === 'server') fitInside(k, s.startTime + 0.1, s.startTime + s.durationMs - 0.1);
+      else if (k.startTime < s.startTime) shift(k, s.startTime + 0.1 - k.startTime);
+    }
+    kids.forEach((k) => visit(k, s));
+  };
+  for (const s of spans) if (!s.parentId || !byId.has(s.parentId)) visit(s);
   return { summary: summarize(t), spans: spans.sort((a, b) => a.startTime - b.startTime), logs: [...t.logs].sort((a, b) => a.ts.localeCompare(b.ts)) };
 }
 

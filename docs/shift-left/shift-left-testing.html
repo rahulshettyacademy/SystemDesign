@@ -1,0 +1,443 @@
+<title>Shift-Left Testing with QAMart</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column (~46rem) with wider tables; each test layer has its own colour, used everywhere that layer appears */
+:root {
+  --bg: #f5f6fa;
+  --surface: #ffffff;
+  --sunk: #eceef5;
+  --fg: #151b2c;
+  --muted: #586179;
+  --line: #d9dde8;
+  --accent: #3b4fd8;
+  --u: #13855a;  --u-bg: #dcf3e8;
+  --i: #1f6fbf;  --i-bg: #dceafa;
+  --c: #7a4bd0;  --c-bg: #ebe2fb;
+  --s: #b36b00;  --s-bg: #fbecd2;
+  --e: #c2412d;  --e-bg: #fbe1dc;
+  --n: #5b6477;  --n-bg: #e6e8ee;
+  --ok: #13855a; --warn: #b36b00; --bad: #c2412d;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b1020; --surface: #121a2e; --sunk: #0e1527; --fg: #e6e9f2; --muted: #95a0b8; --line: #243049; --accent: #8b9bff;
+    --u: #4ad49a; --u-bg: #10301f; --i: #6fb2f5; --i-bg: #112840; --c: #b79cf5; --c-bg: #24193f;
+    --s: #f2b54a; --s-bg: #33240b; --e: #f2846f; --e-bg: #3a1a14; --n: #a3acbf; --n-bg: #1d2437;
+    --ok: #4ad49a; --warn: #f2b54a; --bad: #f2846f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0b1020; --surface: #121a2e; --sunk: #0e1527; --fg: #e6e9f2; --muted: #95a0b8; --line: #243049; --accent: #8b9bff;
+  --u: #4ad49a; --u-bg: #10301f; --i: #6fb2f5; --i-bg: #112840; --c: #b79cf5; --c-bg: #24193f;
+  --s: #f2b54a; --s-bg: #33240b; --e: #f2846f; --e-bg: #3a1a14; --n: #a3acbf; --n-bg: #1d2437;
+  --ok: #4ad49a; --warn: #f2b54a; --bad: #f2846f;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 16px/1.65 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 64px;
+}
+.wrap { max-width: 58rem; margin: 0 auto; }
+.prose { max-width: 46rem; }
+h1, h2, h3 { font-family: var(--display); line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); font-weight: 800; letter-spacing: -.025em; }
+h2 { font-size: clamp(1.5rem, 3.4vw, 2rem); font-weight: 800; letter-spacing: -.015em; }
+h3 { font-size: 1.15rem; font-weight: 600; }
+p { margin: 0; }
+a { color: var(--accent); }
+code { font-family: var(--mono); font-size: .86em; background: var(--sunk); border: 1px solid var(--line); padding: 0 .3em; border-radius: 4px; overflow-wrap: anywhere; }
+strong { font-weight: 600; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* header */
+header.top { padding-block: 56px 28px; display: grid; gap: 18px; border-bottom: 1px solid var(--line); }
+.eyebrow { font-family: var(--mono); font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.15rem; color: var(--muted); max-width: 40rem; }
+.toc { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.toc a { font-size: .85rem; text-decoration: none; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; }
+.toc a:hover { border-color: var(--accent); color: var(--accent); }
+
+section { padding-block: 48px 8px; display: grid; gap: 18px; scroll-margin-top: 12px; }
+.secnum { font-family: var(--mono); font-size: .8rem; color: var(--accent); letter-spacing: .06em; }
+.stack { display: grid; gap: 14px; }
+
+/* timeline */
+.timeline { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+.tl { display: flex; align-items: center; gap: 6px; min-width: 760px; font-size: .82rem; }
+.tl span { padding: 6px 10px; border-radius: 6px; background: var(--sunk); white-space: nowrap; }
+.tl i { color: var(--muted); font-style: normal; }
+.tl .hot { background: var(--u-bg); color: var(--u); font-weight: 600; }
+.tl .warm { background: var(--i-bg); color: var(--i); font-weight: 600; }
+.tl .cold { background: var(--e-bg); color: var(--e); font-weight: 600; }
+.arrow { margin-top: 12px; min-width: 760px; font-family: var(--mono); font-size: .78rem; color: var(--accent); display: flex; align-items: center; gap: 10px; }
+.arrow::after { content: ""; flex: 1; height: 2px; background: linear-gradient(to left, transparent, var(--accent)); }
+
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 14px; }
+.point { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; display: grid; gap: 6px; }
+.point b { font-family: var(--display); font-size: 1.05rem; font-weight: 600; }
+.callout { border-left: 3px solid var(--accent); background: var(--surface); padding: 12px 16px; border-radius: 0 8px 8px 0; color: var(--fg); }
+.callout.big { font-family: var(--display); font-size: 1.25rem; font-weight: 600; line-height: 1.35; }
+
+/* layer chips */
+.chip { display: inline-flex; align-items: center; justify-content: center; min-width: 1.7em; height: 1.7em; padding: 0 .45em; border-radius: 5px; font-family: var(--mono); font-weight: 500; font-size: .8rem; }
+.L-U { color: var(--u); background: var(--u-bg); } .L-I { color: var(--i); background: var(--i-bg); }
+.L-C { color: var(--c); background: var(--c-bg); } .L-S { color: var(--s); background: var(--s-bg); }
+.L-E { color: var(--e); background: var(--e-bg); } .L-N { color: var(--n); background: var(--n-bg); }
+
+/* tables */
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; min-width: 640px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+th { font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; background: var(--sunk); }
+tr:last-child td { border-bottom: 0; }
+td.id { font-family: var(--mono); font-size: .8rem; color: var(--muted); white-space: nowrap; }
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; font-family: var(--mono); font-size: .82rem; }
+.verdict { white-space: nowrap; font-weight: 600; font-size: .82rem; }
+.v-ok { color: var(--ok); } .v-warn { color: var(--warn); } .v-bad { color: var(--bad); }
+
+/* speed bars */
+.speed { display: grid; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+.srow { display: grid; grid-template-columns: 9.5rem 1fr 6.5rem; gap: 12px; align-items: center; font-size: .88rem; }
+.track { height: 12px; background: var(--sunk); border-radius: 6px; overflow: hidden; }
+.track i { display: block; height: 100%; border-radius: 6px; }
+.srow .num { text-align: right; color: var(--muted); }
+.caption { font-size: .82rem; color: var(--muted); }
+@media (max-width: 520px) { .srow { grid-template-columns: 1fr 5.5rem; } .srow .track { grid-column: 1 / -1; grid-row: 2; } }
+
+/* pyramids */
+.pyr { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 14px; }
+.pyr figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 6px; justify-items: center; }
+.pyr figcaption { font-weight: 600; margin-bottom: 6px; font-family: var(--display); }
+.tier { height: 30px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: .76rem; font-family: var(--mono); max-width: 100%; }
+.pyr .note { font-size: .82rem; color: var(--muted); text-align: center; margin-top: 6px; }
+
+/* decision steps */
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: q; }
+ol.steps li { counter-increment: q; display: grid; grid-template-columns: 2.4rem 1fr auto; gap: 12px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+ol.steps li::before { content: "Q" counter(q); font-family: var(--mono); color: var(--muted); font-size: .85rem; }
+@media (max-width: 520px) { ol.steps li { grid-template-columns: 2rem 1fr; } ol.steps li .chip { grid-column: 2; justify-self: start; } }
+
+/* quiz */
+.quiz { display: grid; gap: 12px; }
+.q { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 10px; }
+.q p.s { font-weight: 500; }
+.opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.opts button { font: inherit; font-size: .85rem; cursor: pointer; border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 6px; padding: 5px 12px; }
+.opts button:hover { border-color: var(--accent); }
+.opts button.right { background: var(--u-bg); color: var(--u); border-color: var(--u); }
+.opts button.wrong { background: var(--e-bg); color: var(--e); border-color: var(--e); }
+.fb { font-size: .9rem; color: var(--muted); }
+.score { font-family: var(--mono); font-size: .85rem; color: var(--muted); }
+
+pre.prompt { margin: 0; white-space: pre-wrap; font-family: var(--mono); font-size: .86rem; background: var(--sunk); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+.mistakes { margin: 0; padding-left: 1.2rem; display: grid; gap: 10px; }
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); font-size: .85rem; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+html { scroll-behavior: smooth; }
+</style>
+
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow">Modern QA Engineering · System Design module · QAMart lab</div>
+  <h1>Shift-Left Testing</h1>
+  <p class="lede">Put every test in the cheapest layer that can still catch the bug. You get faster feedback, lower cost and fewer flaky failures, and you keep end-to-end tests for the few things only end-to-end can prove.</p>
+  <nav class="toc" aria-label="Sections">
+    <a href="#what">What it is</a><a href="#layers">The layers</a><a href="#why">Why shift left</a><a href="#pyramid">Pyramid</a>
+    <a href="#unit">Unit scenarios</a><a href="#integration">Integration</a><a href="#e2e">End-to-end</a><a href="#overlap">Overlap</a>
+    <a href="#decide">How to decide</a><a href="#quiz">Quiz</a><a href="#claude">With Claude Code</a><a href="#mistakes">Mistakes</a>
+  </nav>
+</header>
+
+<section id="what">
+  <div class="secnum">1 · Introduction</div>
+  <h2>What is shift-left testing?</h2>
+  <div class="timeline">
+    <div class="tl">
+      <span class="hot">Requirements</span><i>→</i><span class="hot">Design</span><i>→</i><span>Code</span><i>→</i>
+      <span class="hot">Unit tests</span><i>→</i><span class="warm">Integration / API</span><i>→</i><span class="cold">E2E / UI</span><i>→</i><span>Release</span><i>→</i><span class="cold">Production</span>
+    </div>
+    <div class="arrow">shift left</div>
+  </div>
+  <div class="prose stack">
+    <p>Lay the delivery process out from left to right. <strong>Shift-left testing</strong> means finding defects as far left on that line as possible. That has two meanings:</p>
+  </div>
+  <div class="two">
+    <div class="point"><b>Earlier in time</b><span>QA reviews requirements and designs and asks "how will we test this?" before code exists. Scenarios are written from the requirement document.</span></div>
+    <div class="point"><b>Lower in the test stack</b><span>Each rule is checked by the <strong>smallest test that can prove it</strong>: a unit test instead of an API test, an API test instead of a browser test.</span></div>
+  </div>
+  <p class="callout prose">Shift left doesn't mean "no E2E tests", and it doesn't mean "developers do all the testing". Each test lives in the cheapest layer that can still catch the bug, and E2E is kept for what only E2E can prove.</p>
+</section>
+
+<section id="layers">
+  <div class="secnum">2 · Vocabulary</div>
+  <h2>The test layers in QAMart</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Layer</th><th>What it exercises</th><th>QAMart example</th><th>Speed</th><th>Needs the running system?</th></tr></thead>
+    <tbody>
+      <tr><td><span class="chip L-U">U</span> Unit</td><td>One function or class, in memory. No network, database or Docker.</td><td><code>evaluateCoupon</code> discount math, cart quantity validation, stock status (<code>LOW_STOCK</code> at ≤ 5)</td><td class="num">~1–10 ms</td><td>No</td></tr>
+      <tr><td><span class="chip L-I">I</span> Integration</td><td>One service with its <strong>real</strong> database, cache or queue. Other services stubbed.</td><td>Cart + Postgres: 10-unit limit across several adds. Inventory: atomic reservation under concurrency.</td><td class="num">~50–500 ms</td><td>Only that service + its datastore</td></tr>
+      <tr><td><span class="chip L-C">C</span> Contract</td><td>The request/response agreement between two services.</td><td>Order → Payment returns <code>paymentId</code> and <code>status</code></td><td class="num">~10–100 ms</td><td>No (contract files / stubs)</td></tr>
+      <tr><td><span class="chip L-S">S</span> System API</td><td>Several real services through the gateway.</td><td>Checkout: cart → inventory → payment → order → RabbitMQ → notification</td><td class="num">~0.5–5 s</td><td>Yes, whole stack</td></tr>
+      <tr><td><span class="chip L-E">E</span> E2E UI</td><td>A real browser driving the real shop.</td><td>Search → cart → coupon → pay → confirmation</td><td class="num">~5–30 s</td><td>Yes, stack + browser</td></tr>
+    </tbody>
+  </table></div>
+  <p class="caption">Speeds are rough orders of magnitude for this lab on a laptop, not benchmarks. What matters is the ratio: a UI test can easily be a thousand times slower than a unit test that checks the same rule.</p>
+</section>
+
+<section id="why">
+  <div class="secnum">3 · Motivation</div>
+  <h2>Why shift left? The advantages</h2>
+
+  <h3>3.1 Lower cost per defect</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Found at…</th><th>Who is involved</th><th>What it costs</th></tr></thead>
+    <tbody>
+      <tr><td>Requirement review</td><td>BA + QA</td><td>Edit a sentence</td></tr>
+      <tr><td><span class="chip L-U">U</span> Unit test</td><td>One developer, minutes</td><td>Fix and re-run in seconds</td></tr>
+      <tr><td><span class="chip L-I">I</span>/<span class="chip L-S">S</span> API / integration</td><td>Dev + QA, CI pipeline</td><td>Reproduce, debug across services, redeploy</td></tr>
+      <tr><td><span class="chip L-E">E</span> E2E / UI test</td><td>Dev + QA + environment owner</td><td>Flaky reruns, environment debugging, test-data cleanup</td></tr>
+      <tr><td>Production</td><td>Customers, support, on-call, management</td><td>Refunds, reputation, incident review</td></tr>
+    </tbody>
+  </table></div>
+  <div class="point">
+    <b>Example: the missing ₹2,000 cap on DIWALI50</b>
+    <span><code>DIWALI50</code> gives 50% off but should never give more than ₹2,000. Suppose a developer forgets the cap.</span>
+    <span><span class="chip L-U">U</span> <code>evaluateCoupon(subtotal = 10000)</code> returns 5000 instead of 2000. The test fails in milliseconds and the bug is fixed before the push.</span>
+    <span><span class="chip L-E">E</span> A UI test only catches it if someone happens to buy an item over ₹4,000 during the sale.</span>
+    <span>In production, every sale order over ₹4,000 is under-charged, and the company loses real money.</span>
+  </div>
+
+  <h3>3.2 Faster feedback</h3>
+  <div class="speed" role="img" aria-label="Relative time to check one rule at each layer, on a log scale">
+    <div class="srow"><span><span class="chip L-U">U</span> Unit</span><div class="track"><i style="width:6%;background:var(--u)"></i></div><span class="num">~5 ms</span></div>
+    <div class="srow"><span><span class="chip L-C">C</span> Contract</span><div class="track"><i style="width:22%;background:var(--c)"></i></div><span class="num">~50 ms</span></div>
+    <div class="srow"><span><span class="chip L-I">I</span> Integration</span><div class="track"><i style="width:38%;background:var(--i)"></i></div><span class="num">~200 ms</span></div>
+    <div class="srow"><span><span class="chip L-S">S</span> System API</span><div class="track"><i style="width:62%;background:var(--s)"></i></div><span class="num">~2 s</span></div>
+    <div class="srow"><span><span class="chip L-E">E</span> E2E UI</span><div class="track"><i style="width:88%;background:var(--e)"></i></div><span class="num">~15 s</span></div>
+    <p class="caption">Time to check one rule, log scale. Hundreds of unit tests run in seconds on every save. A UI suite takes tens of minutes as it grows and usually only runs in CI. Tests that are fast get run often, so a bug is found minutes after it's written.</p>
+  </div>
+
+  <div class="two">
+    <div class="point"><b>3.3 Exact failure location</b><span>A unit failure says <em>"evaluateCoupon returned 5000, expected 2000"</em>. A UI failure says <em>"Expected text '₹68,900' not found"</em>. Was it the coupon, the cart, the price cache or the UI? Lower tests point at the broken line.</span></div>
+    <div class="point"><b>3.4 Less flakiness</b><span>UI tests depend on timing, rendering, network, seed data and more than ten containers. Unit tests depend on nothing. Fewer moving parts mean fewer false failures and less "just re-run it".</span></div>
+    <div class="point"><b>3.5 Edge cases actually get tested</b><span>The coupon rules alone come to 30+ cases (six rejection codes, five coupons, boundary values). As unit tests: 30 cases in about 50 ms. As UI tests: 30 rounds of log in, search, add, open checkout, type coupon. Nobody writes those 30 UI tests, so the edge cases go untested.</span></div>
+    <div class="point"><b>3.6 Cheaper environments</b><span>Unit and contract tests need no Docker, no seeded databases and no shared QA environment. They run on every laptop and every pull request.</span></div>
+  </div>
+</section>
+
+<section id="pyramid">
+  <div class="secnum">4 · Shape of a test suite</div>
+  <h2>The test pyramid vs the ice-cream cone</h2>
+  <div class="pyr">
+    <figure>
+      <figcaption>Healthy pyramid</figcaption>
+      <div class="tier L-E" style="width:22%">E2E</div>
+      <div class="tier L-S" style="width:38%">System API</div>
+      <div class="tier L-C" style="width:52%">Contract</div>
+      <div class="tier L-I" style="width:72%">Integration</div>
+      <div class="tier L-U" style="width:96%">Unit</div>
+      <p class="note">Many fast tests at the bottom, a few slow ones at the top.</p>
+    </figure>
+    <figure>
+      <figcaption>Ice-cream cone (anti-pattern)</figcaption>
+      <div class="tier L-E" style="width:96%">Manual + UI</div>
+      <div class="tier L-S" style="width:72%">API</div>
+      <div class="tier L-I" style="width:40%">Integration</div>
+      <div class="tier L-U" style="width:16%">Unit</div>
+      <p class="note">Slow, flaky and expensive, and the edge cases are still missing.</p>
+    </figure>
+  </div>
+  <p class="callout prose"><strong>Class exercise:</strong> open QAMart's <code>tests/</code> folder. It has <strong>only</strong> API tests (<code>tests/api</code>) and UI tests (<code>tests/ui</code>), and no unit tests. The lab was built to <em>show the system</em>, so that's deliberate, but it makes a good "before" picture. By the end of this module you should be able to say which of those tests could move down.</p>
+</section>
+
+<section id="unit">
+  <div class="secnum">5.1 · Scenarios</div>
+  <h2><span class="chip L-U">U</span> Unit-level scenarios: move these down</h2>
+  <p class="prose">One function with inputs and outputs decides each of these rules. Testing them through the browser proves nothing extra.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>Scenario</th><th>Code under test</th><th>Why unit</th></tr></thead>
+    <tbody>
+      <tr><td class="id">U1</td><td><code>WELCOME10</code> on ₹69,900 gives ₹1,000 (10% capped at the max)</td><td><code>evaluateCoupon</code> discount formula</td><td>Pure arithmetic</td></tr>
+      <tr><td class="id">U2</td><td><code>WELCOME10</code> on ₹5,000 gives ₹500 (cap not reached)</td><td>same</td><td>Boundary of the cap</td></tr>
+      <tr><td class="id">U3</td><td><code>DIWALI50</code> on ₹999 gives ₹499 (floor of 50%); on ₹998 it's rejected with <code>COUPON_MIN_SUBTOTAL</code></td><td>same</td><td>Boundary + rounding</td></tr>
+      <tr><td class="id">U4</td><td><code>FLAT500</code> never discounts more than the subtotal</td><td>same</td><td>Guard rule</td></tr>
+      <tr><td class="id">U5</td><td>Coupon code <code>" welcome10 "</code> is accepted (trim + case-insensitive)</td><td>Code normalisation</td><td>String handling</td></tr>
+      <tr><td class="id">U6</td><td>A coupon that is both expired <em>and</em> below its minimum reports <code>COUPON_EXPIRED</code> first</td><td><code>evaluateCoupon</code> check order</td><td>Branch logic (coupon row stubbed)</td></tr>
+      <tr><td class="id">U7</td><td>Cart quantity 0, 11, 2.5 and "3" are rejected; 1 and 10 are accepted</td><td>Cart input schema</td><td>Input validation</td></tr>
+      <tr><td class="id">U8</td><td>Pincode: <code>560038</code> is valid; <code>060038</code>, <code>56003</code>, <code>5600381</code> are not</td><td>Checkout address schema</td><td>Regex</td></tr>
+      <tr><td class="id">U9</td><td>Phone: <code>9876543210</code> is valid; <code>5876543210</code> is not</td><td>Checkout address schema</td><td>Regex</td></tr>
+      <tr><td class="id">U10</td><td>Stock 0 → <code>OUT_OF_STOCK</code>, 5 → <code>LOW_STOCK</code>, 6 → <code>IN_STOCK</code></td><td>Inventory status mapping</td><td>Threshold mapping</td></tr>
+      <tr><td class="id">U11</td><td>Idempotency-Key: 7 chars rejected, 8 and 100 accepted, 101 rejected, <code>abc$defgh</code> rejected</td><td>Key validator</td><td>Format rules</td></tr>
+      <tr><td class="id">U12</td><td>Cart price ≠ catalog price, so the item is listed in <code>priceChanges</code></td><td>Checkout price-change filter</td><td>List transformation</td></tr>
+      <tr><td class="id">U13</td><td><code>total = subtotal − discount</code>, <code>lineTotal = unitPrice × quantity</code></td><td>Totals calculation</td><td>Arithmetic</td></tr>
+    </tbody>
+  </table></div>
+  <p class="callout big prose">"If you can test it without starting Docker, you should."</p>
+</section>
+
+<section id="integration">
+  <div class="secnum">5.2 · Scenarios</div>
+  <h2><span class="chip L-I">I</span> Integration-level scenarios</h2>
+  <p class="prose">These rules depend on <strong>state or concurrency inside one service and its datastore</strong>. A unit test with mocks would pass even if the SQL were wrong, so these need a real dependency. They don't need the browser or the other eight services.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>Scenario</th><th>Real dependency</th><th>Why not unit</th><th>Why not E2E</th></tr></thead>
+    <tbody>
+      <tr><td class="id">I1</td><td>Add 6, then 5 of the same product → <code>422 CART_LIMIT_EXCEEDED</code></td><td>Cart + Postgres</td><td>The limit spans two requests (stored state)</td><td>No UI or other service involved</td></tr>
+      <tr><td class="id">I2</td><td>Carts are isolated per user</td><td>Cart + Postgres</td><td>Query filtering by <code>user_id</code></td><td>Same</td></tr>
+      <tr><td class="id">I3</td><td>Two concurrent reservations for the last unit → exactly one succeeds</td><td>Inventory + Postgres</td><td>Only a real DB can prove the atomic update</td><td>A browser can't create a true race</td></tr>
+      <tr><td class="id">I4</td><td>Multi-item reservation where item 2 is short rolls back item 1</td><td>Inventory + Postgres</td><td>Transaction behaviour</td><td>Same</td></tr>
+      <tr><td class="id">I5</td><td><code>LIMITED1</code> redeemed twice at once → one gets <code>COUPON_EXHAUSTED</code></td><td>Order + Postgres row lock</td><td>Lock behaviour</td><td>Same</td></tr>
+      <tr><td class="id">I6</td><td><code>DIWALI50</code> used a second time by the same customer → <code>COUPON_ALREADY_USED</code></td><td>Order + redemptions table</td><td>Needs stored history</td><td>Same</td></tr>
+      <tr><td class="id">I7</td><td>Same <code>Idempotency-Key</code> twice → one order; the second call gets <code>200 Idempotent-Replay</code></td><td>Order + unique constraint</td><td>DB constraint</td><td>Same</td></tr>
+      <tr><td class="id">I8</td><td>Product read is a cache MISS, then a HIT; an admin price update invalidates it</td><td>Product + Redis</td><td>Cache behaviour</td><td>Same</td></tr>
+      <tr><td class="id">I9</td><td>Duplicate <code>OrderCreated</code> delivery → one notification</td><td>Notification + RabbitMQ + Mongo</td><td>Idempotent consumer</td><td>Same</td></tr>
+      <tr><td class="id"><span class="chip L-C">C</span> I10</td><td>Order → Payment request/response shape</td><td>Contract test</td><td>It's an agreement between two teams</td><td>A breaking change shows up long before E2E would notice</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="e2e">
+  <div class="secnum">5.3 · Scenarios</div>
+  <h2><span class="chip L-E">E</span> <span class="chip L-S">S</span> Typical end-to-end scenarios: keep these at the top</h2>
+  <p class="prose">Only end-to-end tests can prove that <strong>all the pieces are wired together</strong> and that the <strong>customer experience</strong> works. Keep this list short and limited to business-critical journeys.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>Layer</th><th>Scenario</th><th>Why it must be end-to-end</th></tr></thead>
+    <tbody>
+      <tr><td class="id">E1</td><td><span class="chip L-E">E</span></td><td>Log in → search "iphone" → add to cart → apply <code>WELCOME10</code> → pay → confirmation → order in history → notification received</td><td>The money journey: proves every service, the gateway and the UI work together</td></tr>
+      <tr><td class="id">E2</td><td><span class="chip L-E">E</span></td><td>Declined payment: the customer stays on checkout and sees a clear message; cart kept; stock and coupon released</td><td>Cross-service compensation plus what the user sees</td></tr>
+      <tr><td class="id">E3</td><td><span class="chip L-E">E</span></td><td>Inventory service down: the product page still renders, with stock "unknown"</td><td>Graceful degradation is both a UI and a system behaviour</td></tr>
+      <tr><td class="id">E4</td><td><span class="chip L-S">S</span></td><td>Payment times out after charging → retry with the same key → charged once, order confirmed</td><td>Distributed failure across order, payment and the reconciler</td></tr>
+      <tr><td class="id">E5</td><td><span class="chip L-S">S</span></td><td>Broker down at checkout → order still confirmed; the email arrives after the broker returns</td><td>Outbox and async delivery across three components</td></tr>
+      <tr><td class="id">E6</td><td><span class="chip L-E">E</span></td><td>Diwali sale smoke test: sale price shown, <code>DIWALI50</code> accepted, sale order completes</td><td>Release-day confidence check</td></tr>
+    </tbody>
+  </table></div>
+  <p class="callout prose">E4 and E5 are <strong>system API</strong> tests, not browser tests. "End-to-end" describes the <em>scope</em> (all services), not clicking buttons. Use the UI only when the UI itself is part of what you're proving.</p>
+</section>
+
+<section id="overlap">
+  <div class="secnum">5.4 · Scenarios</div>
+  <h2>Overlapping scenarios: the same rule in two layers</h2>
+  <p class="prose">Some rules legitimately appear in more than one layer. That's fine <strong>when each layer proves something different</strong>. It's waste when a higher layer re-runs the full set of cases a lower layer already covers.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Rule</th><th>Lower layer covers…</th><th>Higher layer covers…</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>Coupon discount</td><td><span class="chip L-U">U</span> Every coupon, every boundary, rounding and caps (U1–U6)</td><td><span class="chip L-E">E</span> <em>One</em> coupon applied and the total shown correctly (E1)</td><td class="verdict v-ok">✓ Keep both</td></tr>
+      <tr><td>Address validation</td><td><span class="chip L-U">U</span> The full regex matrix (U8, U9)</td><td><span class="chip L-E">E</span> <em>One</em> invalid field shows its error next to the field</td><td class="verdict v-ok">✓ Keep both</td></tr>
+      <tr><td>Invalid coupon rejected</td><td><span class="chip L-U">U</span> Each <code>COUPON_*</code> code</td><td><span class="chip L-S">S</span> <code>04-checkout</code> "coupon rules" <strong>and</strong> <span class="chip L-E">E</span> <code>ui/02</code> "invalid coupon"</td><td class="verdict v-warn">⚠ Three layers for one rule</td></tr>
+      <tr><td>Cart quantity limit</td><td><span class="chip L-U">U</span> Schema allows 1–10 per request (U7)</td><td><span class="chip L-I">I</span> Running total across adds (I1)</td><td class="verdict v-ok">✓ Different rules</td></tr>
+      <tr><td>Out of stock</td><td><span class="chip L-U">U</span> Status mapping (U10) · <span class="chip L-I">I</span> atomic reservation (I3)</td><td><span class="chip L-E">E</span> Add-to-cart disabled for an out-of-stock product</td><td class="verdict v-ok">✓ Each proves something different</td></tr>
+      <tr><td>Idempotency</td><td><span class="chip L-U">U</span> Key format (U11) · <span class="chip L-I">I</span> same key replays (I7)</td><td><span class="chip L-S">S</span> Timeout + retry charged once (E4)</td><td class="verdict v-ok">✓ Lower layers can't reproduce E4</td></tr>
+      <tr><td>Wrong password</td><td><span class="chip L-I">I</span> Same 401 for wrong password and unknown user</td><td><span class="chip L-E">E</span> Generic error shown</td><td class="verdict v-ok">✓ UI checks only the message</td></tr>
+    </tbody>
+  </table></div>
+  <p class="prose"><strong>Fixing the ⚠ case:</strong> keep the unit matrix and one UI message check. The API test only earns its place if it checks something the unit tests can't: <em>"invalid coupon ⇒ no order created, stock unchanged"</em>, which is a rollback.</p>
+  <p class="callout big prose">The lowest layer tests the full set of cases. Each higher layer runs one representative case that proves the wiring or what the user sees.</p>
+</section>
+
+<section id="decide">
+  <div class="secnum">6 · Method</div>
+  <h2>How to decide: the shift-left questions</h2>
+  <p class="prose">Ask these in order and stop at the first "yes".</p>
+  <ol class="steps">
+    <li><span>Can the rule be checked by calling <strong>one function</strong> with inputs and checking the output?</span><span class="chip L-U">Unit</span></li>
+    <li><span>Does it need <strong>real state, a DB constraint, lock or transaction, a cache or a queue</strong>, but only one service?</span><span class="chip L-I">Integration</span></li>
+    <li><span>Is it about the <strong>shape of a request or response between two services</strong>?</span><span class="chip L-C">Contract</span></li>
+    <li><span>Does it need <strong>several real services</strong> to cooperate, or a failure <em>between</em> them?</span><span class="chip L-S">System API</span></li>
+    <li><span>Is what the customer <strong>sees or does in the browser</strong> part of the requirement?</span><span class="chip L-E">E2E UI</span></li>
+  </ol>
+  <p class="prose">Then check for <strong>overlap</strong>. If the same rule also appears higher up, keep only one representative case there.</p>
+</section>
+
+<section id="quiz">
+  <div class="secnum">Practice</div>
+  <h2>Quick quiz: where does it belong?</h2>
+  <p class="prose">Pick the lowest layer that can prove each scenario. <span class="score" id="score" aria-live="polite">0 / 8 correct</span></p>
+  <div class="quiz" id="quizList"></div>
+</section>
+
+<section id="claude">
+  <div class="secnum">7 · Hands-on</div>
+  <h2>Doing it with Claude Code</h2>
+  <p class="prose">The QAMart repo ships two Claude Code skills. <code>qamart-requirements</code> holds the requirement document, with numbered requirements and acceptance criteria. <code>shift-left-testing</code> holds the rules for placing each scenario in a layer, the overlap check, and the output format. Open Claude Code in the repo root and run the two steps.</p>
+  <div class="stack">
+    <h3>Step 1: generate scenarios from the requirements</h3>
+    <pre class="prompt">Using the qamart-requirements skill, write test scenarios for the Coupons and Checkout
+requirements. Give each scenario an ID and the requirement ID it traces to. Don't assign layers yet.</pre>
+    <h3>Step 2: shift them left</h3>
+    <pre class="prompt">Now use the shift-left-testing skill to put each of those scenarios into a test layer.
+Show the layer table, the overlap analysis, and the pyramid summary.</pre>
+  </div>
+  <div class="point">
+    <b>Discuss in class</b>
+    <span>Which scenarios did Claude put in a layer you disagree with? Argue your case using the five questions above.</span>
+    <span>How many UI tests did you end up with, compared with testing everything through the browser?</span>
+    <span>Pick one existing test in <code>tests/ui</code> or <code>tests/api</code>. Where should it live? Is it duplicated somewhere else?</span>
+  </div>
+</section>
+
+<section id="mistakes">
+  <div class="secnum">8 · Watch out</div>
+  <h2>Common mistakes</h2>
+  <ul class="mistakes prose">
+    <li><strong>"Shift left is the developers' job."</strong> QA owns the scenario design and the layer decision, even when a developer writes the unit test.</li>
+    <li><strong>Mocking the thing you're testing.</strong> A unit test of the inventory SQL with the database mocked proves nothing. That's why I3 is an integration test.</li>
+    <li><strong>Testing business rules through the UI.</strong> UI tests should check display and interaction, not recompute the coupon math.</li>
+    <li><strong>No E2E at all.</strong> Every layer can pass while a gateway route is misconfigured. Keep the few critical journeys.</li>
+    <li><strong>Copying the full set of cases upward.</strong> 30 coupon cases in unit, again in API and again in UI is triple the maintenance for no extra confidence.</li>
+  </ul>
+</section>
+
+<footer>QAMart: E-Commerce System Design Learning Lab · Modern QA Engineering: System Design, DevOps &amp; AI</footer>
+</div>
+
+<script>
+(function () {
+  var layers = [["U","Unit"],["I","Integration"],["C","Contract"],["S","System API"],["E","E2E UI"]];
+  var qs = [
+    ["DIWALI50 on a ₹10,000 subtotal gives a ₹2,000 discount.", "U", "Pure arithmetic on the subtotal and the coupon definition. Q1."],
+    ["Fifty buyers race for 3 units of a Lightning Deal; exactly 3 orders are confirmed.", "I", "Concurrency is guaranteed by the database's atomic update. Mocking the DB would hide it."],
+    ["The declined-payment message is shown and the customer stays on the checkout page.", "E", "What the customer sees is the requirement. The compensation behind it is tested at S."],
+    ["Phone number 5876543210 is rejected at checkout.", "U", "A regex check. One UI case for the error display is enough; the full matrix lives in unit."],
+    ["The order service still reads paymentId and status after the payment team renames a field.", "C", "An agreement between two services. A contract test fails on the payment team's pull request."],
+    ["Broker is down during checkout; the order is still confirmed and the email arrives later.", "S", "A failure between services with async delivery. The browser adds nothing to the assertion."],
+    ["Adding 4 units of an iPhone when 8 are already in the cart returns CART_LIMIT_EXCEEDED.", "I", "The limit depends on stored state from the earlier add. The per-request schema allows 4."],
+    ["The full journey: search, cart, coupon, pay, confirmation, order history.", "E", "The business-critical money path. One of the few UI tests worth keeping."]
+  ];
+  var list = document.getElementById("quizList"), scoreEl = document.getElementById("score"), correct = 0;
+  qs.forEach(function (q, idx) {
+    var box = document.createElement("div"); box.className = "q";
+    var p = document.createElement("p"); p.className = "s"; p.textContent = (idx + 1) + ". " + q[0];
+    var opts = document.createElement("div"); opts.className = "opts";
+    var fb = document.createElement("p"); fb.className = "fb"; fb.setAttribute("aria-live", "polite");
+    var answered = false;
+    layers.forEach(function (l) {
+      var b = document.createElement("button"); b.type = "button"; b.id = "q" + idx + "-" + l[0]; b.textContent = l[1];
+      b.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        var right = l[0] === q[1];
+        b.classList.add(right ? "right" : "wrong");
+        if (!right) document.getElementById("q" + idx + "-" + q[1]).classList.add("right");
+        if (right) correct++;
+        fb.textContent = (right ? "Correct. " : "Not quite: it's " + layers.filter(function (x) { return x[0] === q[1]; })[0][1] + ". ") + q[2];
+        scoreEl.textContent = correct + " / " + qs.length + " correct";
+      });
+      opts.appendChild(b);
+    });
+    box.appendChild(p); box.appendChild(opts); box.appendChild(fb);
+    list.appendChild(box);
+  });
+})();
+</script>
