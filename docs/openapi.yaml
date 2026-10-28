@@ -1,0 +1,590 @@
+openapi: 3.0.3
+info:
+  title: QAMart Public API
+  version: 1.0.0
+  description: |
+    Public REST API of the QAMart system-design learning lab. Every request goes through the
+    Nginx gateway at `http://localhost:8080`, which routes by path to the owning microservice.
+
+    * **Authentication:** `POST /api/auth/login` returns a JWT. Send it as `Authorization: Bearer <token>`.
+    * **Correlation:** every response carries `X-Request-ID`. You may send your own (8-64 chars `[A-Za-z0-9-]`).
+    * **Lab diagnostics (LAB_MODE only):** `X-Served-By` (instance), `X-Cache` (HIT/MISS/BYPASS), `X-Cache-TTL`.
+    * **Money:** all amounts are whole Indian Rupees (integers). Payments are simulated.
+    * **Errors:** always `{ "error": { "code", "message", "details?", "requestId" } }`.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: Auth
+  - name: Products
+    description: product service (3 instances behind the load balancer, MongoDB + Redis cache)
+  - name: Inventory
+  - name: Cart
+  - name: Coupons
+  - name: Orders
+  - name: Payments
+  - name: Notifications
+
+paths:
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in with a demo account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+            example: { email: alice@qamart.test, password: Password@123 }
+      responses:
+        '200': { description: Logged in, content: { application/json: { schema: { $ref: '#/components/schemas/LoginResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { description: INVALID_CREDENTIALS, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      security: [{ bearer: [] }]
+      responses:
+        '200': { description: The user in the token, content: { application/json: { schema: { $ref: '#/components/schemas/MeResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/products:
+    get:
+      tags: [Products]
+      summary: Search / browse products
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 100 }, description: matches name, brand, category or tags (case-insensitive) }
+        - { name: category, in: query, schema: { type: string, enum: [mobiles, laptops, audio, wearables, tv, home, fashion, appliances] } }
+        - { name: deals, in: query, schema: { type: string, enum: ['true', 'false'] } }
+        - { name: sort, in: query, schema: { type: string, enum: [relevance, price_asc, price_desc, rating], default: relevance } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 12 } }
+      responses:
+        '200': { description: Search results, content: { application/json: { schema: { $ref: '#/components/schemas/SearchResult' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+  /api/products/categories:
+    get:
+      tags: [Products]
+      summary: Categories with product counts
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CategoryList' } } } }
+  /api/products/sale:
+    get:
+      tags: [Products]
+      summary: Is the Diwali sale active?
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SaleStatus' } } } }
+  /api/products/{id}:
+    get:
+      tags: [Products]
+      summary: Product details (cache-aside via Redis)
+      parameters: [{ $ref: '#/components/parameters/ProductId' }]
+      responses:
+        '200':
+          description: Product
+          headers:
+            X-Cache: { schema: { type: string, enum: [HIT, MISS, BYPASS] }, description: LAB_MODE only }
+            X-Served-By: { schema: { type: string }, description: LAB_MODE only - which product instance answered }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ProductDetail' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Products]
+      summary: Update price / MRP / name (admin only). Invalidates the cache entry.
+      security: [{ bearer: [] }]
+      parameters: [{ $ref: '#/components/parameters/ProductId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                price: { type: integer, minimum: 1 }
+                mrp: { type: integer, minimum: 1 }
+                name: { type: string, minLength: 3 }
+            example: { price: 74900 }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/ProductUpdateResult' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/inventory:
+    get:
+      tags: [Inventory]
+      summary: Stock for several products
+      parameters:
+        - { name: productIds, in: query, required: true, schema: { type: string }, example: 'iphone-15-128,pixel-8-128' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/StockList' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+  /api/inventory/{productId}:
+    get:
+      tags: [Inventory]
+      summary: Stock for one product
+      parameters: [{ name: productId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/StockInfo' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/cart:
+    get:
+      tags: [Cart]
+      summary: The current user's cart
+      security: [{ bearer: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [Cart]
+      summary: Empty the cart
+      security: [{ bearer: [] }]
+      responses:
+        '200': { description: Empty cart, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+  /api/cart/items:
+    post:
+      tags: [Cart]
+      summary: Add a product (quantity is added to what is already in the cart, max 10 per product)
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [productId]
+              properties:
+                productId: { type: string }
+                quantity: { type: integer, minimum: 1, maximum: 10, default: 1 }
+            example: { productId: iphone-15-128, quantity: 1 }
+      responses:
+        '201': { description: Updated cart, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: CART_LIMIT_EXCEEDED, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '503': { description: PRODUCT_SERVICE_UNAVAILABLE, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/cart/items/{productId}:
+    patch:
+      tags: [Cart]
+      summary: Change quantity
+      security: [{ bearer: [] }]
+      parameters: [{ name: productId, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [quantity], additionalProperties: false, properties: { quantity: { type: integer, minimum: 1, maximum: 10 } } }
+      responses:
+        '200': { description: Updated cart, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { description: ITEM_NOT_IN_CART, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    delete:
+      tags: [Cart]
+      summary: Remove a product
+      security: [{ bearer: [] }]
+      parameters: [{ name: productId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Updated cart, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+        '404': { description: ITEM_NOT_IN_CART, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /api/coupons:
+    get:
+      tags: [Coupons]
+      summary: Currently usable coupons
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CouponList' } } } }
+  /api/coupons/validate:
+    post:
+      tags: [Coupons]
+      summary: Check a coupon against a subtotal (does NOT redeem it)
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [code, subtotal], additionalProperties: false, properties: { code: { type: string }, subtotal: { type: integer, minimum: 1 } } }
+            example: { code: WELCOME10, subtotal: 69900 }
+      responses:
+        '200': { description: Valid, content: { application/json: { schema: { $ref: '#/components/schemas/CouponValidation' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '422':
+          description: COUPON_INVALID | COUPON_INACTIVE | COUPON_EXPIRED | COUPON_MIN_SUBTOTAL | COUPON_EXHAUSTED | COUPON_ALREADY_USED
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /api/orders:
+    post:
+      tags: [Orders]
+      summary: Checkout - create an order from the cart, reserve stock and charge (simulated)
+      description: |
+        Requires an `Idempotency-Key` header. Re-sending the same key returns the ORIGINAL order
+        (HTTP 200 + `Idempotent-Replay: true`) and never charges twice.
+        Prices are re-read from the catalog database (not the cart, not the cache).
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{8,100}$' }, example: 3f1c2b8e-5a3e-4d8e-9b8c-1d2e3f4a5b6c }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CheckoutRequest' }
+            example:
+              paymentMethod: demo_success
+              couponCode: WELCOME10
+              shippingAddress: { name: Alice Sharma, line1: 12 MG Road, Indiranagar, city: Bengaluru, pincode: '560038', phone: '9876543210' }
+      responses:
+        '201': { description: Order CONFIRMED, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '200': { description: Idempotent replay of an earlier request with the same key, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '202': { description: PAYMENT_PENDING - payment outcome unknown (timeout); reconciled automatically, content: { application/json: { schema: { $ref: '#/components/schemas/CheckoutFailure' } } } }
+        '400': { description: VALIDATION_ERROR | CART_EMPTY | IDEMPOTENCY_KEY_REQUIRED | IDEMPOTENCY_KEY_INVALID, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: PAYMENT_DECLINED (order recorded as PAYMENT_FAILED), content: { application/json: { schema: { $ref: '#/components/schemas/CheckoutFailure' } } } }
+        '409': { description: OUT_OF_STOCK (order REJECTED) | REQUEST_IN_PROGRESS | PRODUCT_UNAVAILABLE, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: COUPON_* - nothing was created, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '503': { description: PAYMENT_UNAVAILABLE | INVENTORY_UNAVAILABLE | CART_UNAVAILABLE | CATALOG_UNAVAILABLE - customer NOT charged, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    get:
+      tags: [Orders]
+      summary: Order history of the current user (latest 50)
+      security: [{ bearer: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/OrderList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/orders/{id}:
+    get:
+      tags: [Orders]
+      summary: One order (owner or admin only; other users get 404)
+      security: [{ bearer: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/payments:
+    get:
+      tags: [Payments]
+      summary: Charges for one of your orders (proves "charged exactly once")
+      security: [{ bearer: [] }]
+      parameters: [{ name: orderId, in: query, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentList' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/notifications:
+    get:
+      tags: [Notifications]
+      summary: Your notifications (created asynchronously from OrderCreated events)
+      security: [{ bearer: [] }]
+      parameters: [{ name: orderId, in: query, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    ProductId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-z0-9-]{3,60}$' }
+      example: iphone-15-128
+  responses:
+    ValidationError:
+      description: VALIDATION_ERROR (details lists each invalid field) or INVALID_JSON
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Unauthorized:
+      description: AUTH_REQUIRED | TOKEN_INVALID | TOKEN_EXPIRED
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Forbidden:
+      description: FORBIDDEN
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: Resource not found
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: VALIDATION_ERROR }
+            message: { type: string }
+            details: {}
+            requestId: { type: string }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, email, name, role]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string }
+        role: { type: string, enum: [customer, admin] }
+    LoginResponse:
+      type: object
+      additionalProperties: false
+      required: [token, user]
+      properties:
+        token: { type: string }
+        user: { $ref: '#/components/schemas/User' }
+    MeResponse:
+      type: object
+      required: [user]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+    Image:
+      type: object
+      required: [icon, color]
+      properties:
+        icon: { type: string }
+        color: { type: string }
+    ProductSummary:
+      type: object
+      additionalProperties: false
+      required: [id, sku, name, brand, category, price, mrp, rating, reviews, image, sale]
+      properties:
+        id: { type: string }
+        sku: { type: string }
+        name: { type: string }
+        brand: { type: string }
+        category: { type: string }
+        price: { type: integer, minimum: 1, description: effective price (sale price when a sale is active) }
+        mrp: { type: integer, minimum: 1 }
+        rating: { type: number, minimum: 0, maximum: 5 }
+        reviews: { type: integer, minimum: 0 }
+        image: { $ref: '#/components/schemas/Image' }
+        sale:
+          type: object
+          nullable: true
+          required: [label, regularPrice]
+          properties:
+            label: { type: string }
+            regularPrice: { type: integer }
+    ProductDetail:
+      type: object
+      additionalProperties: false
+      required: [id, sku, name, brand, category, price, mrp, rating, reviews, image, sale, description, specs, variants, tags, updatedAt]
+      properties:
+        id: { type: string }
+        sku: { type: string }
+        name: { type: string }
+        brand: { type: string }
+        category: { type: string }
+        price: { type: integer, minimum: 1 }
+        mrp: { type: integer, minimum: 1 }
+        rating: { type: number, minimum: 0, maximum: 5 }
+        reviews: { type: integer, minimum: 0 }
+        image: { $ref: '#/components/schemas/Image' }
+        sale: { $ref: '#/components/schemas/ProductSummary/properties/sale' }
+        description: { type: string }
+        specs: { type: object, nullable: true, additionalProperties: { type: string }, description: shape differs per category (flexible document) }
+        variants: { type: object, nullable: true, additionalProperties: { type: array, items: { type: string } } }
+        tags: { type: array, items: { type: string } }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    SearchResult:
+      type: object
+      additionalProperties: false
+      required: [items, page, limit, total, totalPages]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ProductSummary' } }
+        page: { type: integer, minimum: 1 }
+        limit: { type: integer, minimum: 1, maximum: 50 }
+        total: { type: integer, minimum: 0 }
+        totalPages: { type: integer, minimum: 0 }
+    CategoryList:
+      type: object
+      required: [categories]
+      properties:
+        categories:
+          type: array
+          items: { type: object, required: [id, name, count], properties: { id: { type: string }, name: { type: string }, count: { type: integer } } }
+    SaleStatus:
+      type: object
+      required: [active, label, dealCount]
+      properties:
+        active: { type: boolean }
+        label: { type: string }
+        dealCount: { type: integer }
+    ProductUpdateResult:
+      type: object
+      required: [product, cacheInvalidated]
+      properties:
+        product: { $ref: '#/components/schemas/ProductDetail' }
+        cacheInvalidated: { type: boolean }
+    StockInfo:
+      type: object
+      additionalProperties: false
+      required: [productId, available, status]
+      properties:
+        productId: { type: string }
+        available: { type: integer, minimum: 0 }
+        status: { type: string, enum: [IN_STOCK, LOW_STOCK, OUT_OF_STOCK] }
+    StockList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/StockInfo' } }
+    CartItem:
+      type: object
+      additionalProperties: false
+      required: [productId, name, unitPrice, image, quantity, lineTotal]
+      properties:
+        productId: { type: string }
+        name: { type: string }
+        unitPrice: { type: integer, minimum: 1, description: price snapshot taken when the item was added }
+        image: { $ref: '#/components/schemas/Image' }
+        quantity: { type: integer, minimum: 1, maximum: 10 }
+        lineTotal: { type: integer }
+    Cart:
+      type: object
+      additionalProperties: false
+      required: [userId, items, itemCount, subtotal]
+      properties:
+        userId: { type: string, format: uuid }
+        items: { type: array, items: { $ref: '#/components/schemas/CartItem' } }
+        itemCount: { type: integer, minimum: 0 }
+        subtotal: { type: integer, minimum: 0 }
+    CouponList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { type: object, required: [code, description, minSubtotal], properties: { code: { type: string }, description: { type: string }, minSubtotal: { type: integer } } }
+    CouponValidation:
+      type: object
+      additionalProperties: false
+      required: [valid, code, description, discount, totalAfterDiscount]
+      properties:
+        valid: { type: boolean, enum: [true] }
+        code: { type: string }
+        description: { type: string }
+        discount: { type: integer, minimum: 0 }
+        totalAfterDiscount: { type: integer, minimum: 0 }
+    ShippingAddress:
+      type: object
+      required: [name, line1, city, pincode, phone]
+      properties:
+        name: { type: string, minLength: 2 }
+        line1: { type: string, minLength: 5 }
+        city: { type: string, minLength: 2 }
+        pincode: { type: string, pattern: '^[1-9][0-9]{5}$' }
+        phone: { type: string, pattern: '^[6-9][0-9]{9}$' }
+    CheckoutRequest:
+      type: object
+      additionalProperties: false
+      required: [paymentMethod, shippingAddress]
+      properties:
+        couponCode: { type: string, maxLength: 30 }
+        paymentMethod: { type: string, enum: [demo_success, demo_decline, demo_slow] }
+        shippingAddress: { $ref: '#/components/schemas/ShippingAddress' }
+    OrderItem:
+      type: object
+      additionalProperties: false
+      required: [productId, name, unitPrice, quantity, lineTotal]
+      properties:
+        productId: { type: string }
+        name: { type: string }
+        unitPrice: { type: integer, minimum: 1 }
+        quantity: { type: integer, minimum: 1 }
+        lineTotal: { type: integer, minimum: 1 }
+    Order:
+      type: object
+      additionalProperties: false
+      required: [id, orderNumber, status, items, subtotal, discount, total, couponCode, paymentMethod, paymentId, failure, shippingAddress, createdAt, updatedAt, events]
+      properties:
+        id: { type: string, format: uuid }
+        orderNumber: { type: string, pattern: '^QM-[0-9]+$' }
+        status: { type: string, enum: [PENDING, PAYMENT_PENDING, CONFIRMED, PAYMENT_FAILED, REJECTED] }
+        items: { type: array, items: { $ref: '#/components/schemas/OrderItem' } }
+        subtotal: { type: integer, minimum: 1 }
+        discount: { type: integer, minimum: 0 }
+        total: { type: integer, minimum: 0 }
+        couponCode: { type: string, nullable: true }
+        paymentMethod: { type: string }
+        paymentId: { type: string, format: uuid, nullable: true }
+        failure:
+          type: object
+          nullable: true
+          required: [code, reason]
+          properties: { code: { type: string }, reason: { type: string } }
+        shippingAddress: { $ref: '#/components/schemas/ShippingAddress' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        events:
+          type: array
+          items: { type: object, required: [status, note, at], properties: { status: { type: string }, note: { type: string }, at: { type: string, format: date-time } } }
+        priceChanges:
+          type: array
+          description: present on a fresh checkout when catalog prices differ from the cart snapshot
+          items: { type: object, properties: { productId: { type: string }, cartPrice: { type: integer }, currentPrice: { type: integer } } }
+    CheckoutFailure:
+      type: object
+      required: [error, order]
+      properties:
+        error: { $ref: '#/components/schemas/Error/properties/error' }
+        order: { $ref: '#/components/schemas/Order' }
+    OrderList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Order' } }
+    Payment:
+      type: object
+      additionalProperties: false
+      required: [paymentId, idempotencyKey, orderId, amount, currency, method, status, declineReason, requestCount, replayed, createdAt]
+      properties:
+        paymentId: { type: string, format: uuid }
+        idempotencyKey: { type: string }
+        orderId: { type: string, format: uuid }
+        amount: { type: integer, minimum: 1 }
+        currency: { type: string, enum: [INR] }
+        method: { type: string }
+        status: { type: string, enum: [PROCESSING, SUCCEEDED, DECLINED] }
+        declineReason: { type: string, nullable: true }
+        requestCount: { type: integer, minimum: 1, description: how many charge requests arrived with this idempotency key }
+        replayed: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    PaymentList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Payment' } }
+    Notification:
+      type: object
+      additionalProperties: false
+      required: [id, orderId, orderNumber, type, channel, subject, body, status, attempts, createdAt]
+      properties:
+        id: { type: string }
+        orderId: { type: string, format: uuid }
+        orderNumber: { type: string }
+        type: { type: string, enum: [ORDER_CONFIRMATION] }
+        channel: { type: string }
+        subject: { type: string }
+        body: { type: string }
+        status: { type: string, enum: [SENT] }
+        attempts: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+    NotificationList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Notification' } }

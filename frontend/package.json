@@ -1,0 +1,13 @@
+{
+  "name": "qamart-frontend",
+  "private": true,
+  "workspaces": ["shop", "lab-dashboard"],
+  "scripts": {
+    "build": "npm run build -w shop && npm run build -w lab-dashboard",
+    "dev:shop": "npm run dev -w shop",
+    "dev:lab": "npm run dev -w lab-dashboard"
+  },
+  "dependencies": {
+    "swagger-ui-dist": "5.18.2"
+  }
+}

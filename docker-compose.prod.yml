@@ -1,0 +1,21 @@
+# Production-like override: teaching endpoints, diagnostics and the dashboard are DISABLED.
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+# The lab service is not started, Nginx drops the :8081 server, every service runs with LAB_MODE=false.
+services:
+  nginx:
+    environment: { NGINX_MODE: prod }
+    ports: !override
+      - "127.0.0.1:${SHOP_PORT:-8080}:8080"
+  lab:
+    profiles: ["never"]
+  auth: { environment: { LAB_MODE: "false" } }
+  product-1: { environment: { LAB_MODE: "false" } }
+  product-2: { environment: { LAB_MODE: "false" } }
+  product-3: { environment: { LAB_MODE: "false" } }
+  cart: { environment: { LAB_MODE: "false" } }
+  inventory: { environment: { LAB_MODE: "false" } }
+  order: { environment: { LAB_MODE: "false" } }
+  payment: { environment: { LAB_MODE: "false" } }
+  notification: { environment: { LAB_MODE: "false" } }
+  adminer:
+    profiles: ["never"]

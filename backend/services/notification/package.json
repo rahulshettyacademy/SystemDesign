@@ -1,0 +1,7 @@
+{
+  "name": "@qamart/notification",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "dependencies": { "@qamart/common": "1.0.0", "express": "5.1.0", "mongodb": "6.12.0" }
+}

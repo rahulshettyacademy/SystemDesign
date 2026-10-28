@@ -1,0 +1,22 @@
+{
+  "name": "qamart-tests",
+  "private": true,
+  "description": "Sample automated tests for the QAMart system design lab. Study them, run them, extend them.",
+  "scripts": {
+    "test": "playwright test",
+    "test:api": "playwright test --project=api",
+    "test:ui": "playwright test --project=ui",
+    "test:fast": "playwright test --grep-invert @slow",
+    "report": "playwright show-report",
+    "load": "k6 run load/diwali-sale.js",
+    "load:smoke": "k6 run -e PROFILE=smoke load/diwali-sale.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.49.1",
+    "ajv": "8.17.1",
+    "ajv-formats": "3.0.1",
+    "yaml": "2.7.0",
+    "@types/node": "22.10.2",
+    "typescript": "5.7.2"
+  }
+}

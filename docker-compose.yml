@@ -1,0 +1,228 @@
+# QAMart - E-Commerce System Design Learning Lab
+#   docker compose up --build -d
+#   Shop:               http://localhost:8080
+#   Teaching dashboard: http://localhost:8081
+#   API docs:           http://localhost:8080/api-docs/
+name: qamart
+
+x-node-service: &node-service
+  build: ./backend
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+    interval: 10s
+    timeout: 3s
+    retries: 3
+    start_period: 20s
+
+x-common-env: &common-env
+  LAB_MODE: ${LAB_MODE:-true}
+  LAB_URL: http://lab:3000
+  LAB_TOKEN: ${LAB_TOKEN:-local-lab-token}
+  INTERNAL_TOKEN: ${INTERNAL_TOKEN:-local-internal-token}
+  JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-change-me}
+  RABBITMQ_URL: amqp://qamart:qamart_pw@rabbitmq:5672
+
+x-product-env: &product-env
+  <<: *common-env
+  SERVICE_NAME: product
+  MONGO_URL: mongodb://catalog_svc:catalog_pw@mongodb:27017/catalog_db?authSource=catalog_db
+  REDIS_URL: redis://redis:6379
+  CACHE_TTL_SECONDS: "60"
+
+services:
+  # ------------------------------------------------------------------ edge
+  nginx:
+    build:
+      context: .
+      dockerfile: infra/nginx/Dockerfile
+    container_name: qamart-nginx
+    restart: unless-stopped
+    environment:
+      NGINX_MODE: ${NGINX_MODE:-lab}
+    ports:
+      - "127.0.0.1:${SHOP_PORT:-8080}:8080"   # customer shop + /api + /api-docs
+      - "127.0.0.1:${LAB_PORT:-8081}:8081"    # teaching dashboard (local only)
+    volumes:
+      - nginx-logs:/var/log/nginx/lab
+
+  # ------------------------------------------------------------------ services
+  auth:
+    <<: *node-service
+    container_name: qamart-auth
+    command: ["node", "services/auth/dist/index.js"]
+    environment:
+      <<: *common-env
+      SERVICE_NAME: auth
+      INSTANCE_ID: auth
+      DATABASE_URL: postgres://auth_svc:auth_pw@postgres:5432/auth_db
+    depends_on: { postgres: { condition: service_healthy } }
+
+  product-1:
+    <<: *node-service
+    container_name: qamart-product-1
+    command: ["node", "services/product/dist/index.js"]
+    environment: { <<: *product-env, INSTANCE_ID: product-1 }
+    depends_on: { mongodb: { condition: service_healthy }, redis: { condition: service_started } }
+  product-2:
+    <<: *node-service
+    container_name: qamart-product-2
+    command: ["node", "services/product/dist/index.js"]
+    environment: { <<: *product-env, INSTANCE_ID: product-2 }
+    depends_on: { mongodb: { condition: service_healthy }, redis: { condition: service_started } }
+  product-3:
+    <<: *node-service
+    container_name: qamart-product-3
+    command: ["node", "services/product/dist/index.js"]
+    environment: { <<: *product-env, INSTANCE_ID: product-3 }
+    depends_on: { mongodb: { condition: service_healthy }, redis: { condition: service_started } }
+
+  cart:
+    <<: *node-service
+    container_name: qamart-cart
+    command: ["node", "services/cart/dist/index.js"]
+    environment:
+      <<: *common-env
+      SERVICE_NAME: cart
+      INSTANCE_ID: cart
+      DATABASE_URL: postgres://cart_svc:cart_pw@postgres:5432/cart_db
+      PRODUCT_URL: http://nginx:8090
+    depends_on: { postgres: { condition: service_healthy }, rabbitmq: { condition: service_healthy } }
+
+  inventory:
+    <<: *node-service
+    container_name: qamart-inventory
+    command: ["node", "services/inventory/dist/index.js"]
+    environment:
+      <<: *common-env
+      SERVICE_NAME: inventory
+      INSTANCE_ID: inventory
+      DATABASE_URL: postgres://inventory_svc:inventory_pw@postgres:5432/inventory_db
+    depends_on: { postgres: { condition: service_healthy }, rabbitmq: { condition: service_healthy } }
+
+  order:
+    <<: *node-service
+    container_name: qamart-order
+    command: ["node", "services/order/dist/index.js"]
+    environment:
+      <<: *common-env
+      SERVICE_NAME: order
+      INSTANCE_ID: order
+      DATABASE_URL: postgres://order_svc:order_pw@postgres:5432/order_db
+      CART_URL: http://cart:3000
+      PRODUCT_URL: http://nginx:8090
+      INVENTORY_URL: http://inventory:3000
+      PAYMENT_URL: http://payment:3000
+      PAYMENT_TIMEOUT_MS: "3000"
+    depends_on: { postgres: { condition: service_healthy }, rabbitmq: { condition: service_healthy } }
+
+  payment:
+    <<: *node-service
+    container_name: qamart-payment
+    command: ["node", "services/payment/dist/index.js"]
+    environment:
+      <<: *common-env
+      SERVICE_NAME: payment
+      INSTANCE_ID: payment
+      DATABASE_URL: postgres://payment_svc:payment_pw@postgres:5432/payment_db
+    depends_on: { postgres: { condition: service_healthy } }
+
+  notification:
+    <<: *node-service
+    container_name: qamart-notification
+    command: ["node", "services/notification/dist/index.js"]
+    environment:
+      <<: *common-env
+      SERVICE_NAME: notification
+      INSTANCE_ID: notification
+      MONGO_URL: mongodb://notification_svc:notification_pw@mongodb:27017/notification_db?authSource=notification_db
+    depends_on: { mongodb: { condition: service_healthy }, rabbitmq: { condition: service_healthy } }
+
+  # ------------------------------------------------------------------ teaching control plane (local only)
+  lab:
+    <<: *node-service
+    container_name: qamart-lab
+    command: ["node", "services/lab/dist/index.js"]
+    user: root   # needs the Docker socket to stop/start containers for failure demos
+    environment:
+      <<: *common-env
+      SERVICE_NAME: lab
+      INSTANCE_ID: lab
+    volumes:
+      - nginx-logs:/var/log/nginx/lab
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on: { postgres: { condition: service_healthy }, rabbitmq: { condition: service_healthy } }
+
+  # ------------------------------------------------------------------ data & messaging
+  postgres:
+    image: postgres:16.6-alpine
+    container_name: qamart-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_pw
+    ports: ["127.0.0.1:${PG_PORT:-55432}:5432"]
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./infra/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mongodb:
+    image: mongo:7.0.16
+    container_name: qamart-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root_pw
+    ports: ["127.0.0.1:${MONGO_PORT:-57017}:27017"]
+    volumes:
+      - mongo-data:/data/db
+      - ./infra/mongo:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4.2-alpine
+    container_name: qamart-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports: ["127.0.0.1:${REDIS_PORT:-56379}:6379"]
+
+  rabbitmq:
+    image: rabbitmq:3.13.7-management-alpine
+    container_name: qamart-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: qamart
+      RABBITMQ_DEFAULT_PASS: qamart_pw
+    ports: ["127.0.0.1:${RABBITMQ_UI_PORT:-15672}:15672"]
+    volumes:
+      - rabbit-data:/var/lib/rabbitmq
+      - ./infra/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/90-qamart.conf:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  # Web UI for browsing PostgreSQL (log in with lab_readonly / lab_readonly_pw, server "postgres").
+  adminer:
+    image: adminer:4.8.1
+    container_name: qamart-adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports: ["127.0.0.1:${ADMINER_PORT:-8082}:8080"]
+
+volumes:
+  pg-data:
+  mongo-data:
+  rabbit-data:
+  nginx-logs:
